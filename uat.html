@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UAT Testing - Conversational AI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3>UAT Testing</h3>
+            </div>
+            <div class="session-list">
+                <a href="/" class="session-item">
+                    &larr; Back to Chat
+                </a>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="chat-container">
+            <div class="chat-header">
+                <h2>User Acceptance Testing with GraphRAG</h2>
+            </div>
+            
+            <!-- User Story Input -->
+            <div class="settings-content">
+                <h3>Enter User Story</h3>
+                <p>Provide a user story to generate test cases using GraphRAG:</p>
+                <form action="/uat/generate_test_cases" method="post">
+                    <textarea name="user_story" rows="4" placeholder="As a [user role], I want to [goal] so that [benefit]">{{ uat_user_story or '' }}</textarea>
+                    <br><br>
+                    <div class="controls">
+                        <input type="submit" value="Generate Test Cases">
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Generated Test Cases -->
+            {% if test_cases %}
+            <div class="settings-content">
+                <h3>Generated Test Cases</h3>
+                <div class="test-cases-container">
+                    {% for test_case in test_cases %}
+                    <div class="test-case-card">
+                        <h4>{{ test_case.id }}: {{ test_case.scenario }}</h4>
+                        <p><strong>Type:</strong> {{ test_case.type }}</p>
+                        <p><strong>Description:</strong> {{ test_case.description }}</p>
+                        <p><strong>Steps:</strong></p>
+                        <ol>
+                            {% for step in test_case.steps %}
+                            <li>{{ step }}</li>
+                            {% endfor %}
+                        </ol>
+                        <p><strong>Expected Result:</strong> {{ test_case.expected_result }}</p>
+                        <button class="save-button" onclick="saveTestCase('{{ test_case.id }}')">Save to Knowledge Base</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Test Variables Configuration -->
+            {% if variables %}
+            <div class="settings-content">
+                <h3>Test Variables Configuration</h3>
+                <p>Configure the variables for test execution:</p>
+                <div class="variables-container">
+                    {% for category, items in variables.items() %}
+                    <div class="variable-category">
+                        <h4>{{ category.replace('_', ' ').title() }}</h4>
+                        <ul>
+                            {% for item in items %}
+                            <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endfor %}
+                </div>
+                <button class="save-button" onclick="configureVariables()">Save Configuration</button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <script>
+        function saveTestCase(testCaseId) {
+            // In a real implementation, this would send the test case to the backend
+            alert('Test case ' + testCaseId + ' would be saved to the knowledge base.');
+        }
+        
+        function configureVariables() {
+            // In a real implementation, this would send the variable configuration to the backend
+            alert('Variables configuration would be saved.');
+        }
+    </script>
+</body>
+</html>
