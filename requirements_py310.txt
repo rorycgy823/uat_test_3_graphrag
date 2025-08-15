@@ -11,6 +11,8 @@
 # --- Core ML/LLM Libraries ---
 # A recent, stable version of ctransformers.
 ctransformers==0.2.27
+# Llama.cpp Python bindings for GGUF models
+llama-cpp-python==0.2.56
 
 # --- Web Framework ---
 Flask==2.3.3

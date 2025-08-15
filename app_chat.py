@@ -40,6 +40,57 @@ app.secret_key = 'supersecretkey'
 llm = None
 PROMPT_TEMPLATE = "Instruct: {prompt}\nOutput:"
 
+# --- Server-side Session Storage ---
+SESSION_DB = 'sessions.db'
+UAT_SESSION_DB = 'uat_sessions.db'
+
+def get_all_sessions():
+    """Get all chat sessions from server-side storage"""
+    with shelve.open(SESSION_DB) as db:
+        return sorted(db.keys(), reverse=True)
+
+def save_session(session_id, history, timings=''):
+    """Save chat session to server-side storage"""
+    with shelve.open(SESSION_DB) as db:
+        db[session_id] = {
+            'history': history,
+            'timings': timings,
+            'timestamp': datetime.now().isoformat()
+        }
+
+def load_session(session_id):
+    """Load chat session from server-side storage"""
+    with shelve.open(SESSION_DB) as db:
+        session_data = db.get(session_id, {})
+        return session_data.get('history', []), session_data.get('timings', '')
+
+def delete_session(session_id):
+    """Delete a specific session from server-side storage"""
+    with shelve.open(SESSION_DB) as db:
+        if session_id in db:
+            del db[session_id]
+
+def cleanup_old_sessions(max_age_days=30):
+    """Clean up sessions older than max_age_days"""
+    with shelve.open(SESSION_DB) as db:
+        keys_to_delete = []
+        cutoff_time = datetime.now().timestamp() - (max_age_days * 24 * 60 * 60)
+        
+        for key in db.keys():
+            session_data = db[key]
+            timestamp = session_data.get('timestamp', '')
+            if timestamp:
+                try:
+                    session_time = datetime.fromisoformat(timestamp).timestamp()
+                    if session_time < cutoff_time:
+                        keys_to_delete.append(key)
+                except ValueError:
+                    # If we can't parse the timestamp, mark for deletion
+                    keys_to_delete.append(key)
+        
+        for key in keys_to_delete:
+            del db[key]
+
 # --- GraphRAG Components ---
 if GRAPH_RAG_AVAILABLE:
     try:
@@ -54,24 +105,7 @@ else:
     chroma_db_manager = None
 
 # --- Session Management ---
-SESSION_DB = 'sessions.db'
-
-def get_all_sessions():
-    with shelve.open(SESSION_DB) as db:
-        return sorted(db.keys(), reverse=True)
-
-def save_session(session_id, history):
-    with shelve.open(SESSION_DB) as db:
-        db[session_id] = history
-
-def load_session(session_id):
-    with shelve.open(SESSION_DB) as db:
-        return db.get(session_id, [])
-
-def delete_session(session_id):
-    with shelve.open(SESSION_DB) as db:
-        if session_id in db:
-            del db[session_id]
+# Using the server-side session storage functions defined above
 
 # --- Model Loading ---
 def load_model():
@@ -104,7 +138,7 @@ def load_model():
         logger.info("Loading Phi-2 GGUF model with llama-cpp-python...")
         llm = Llama(
             model_path=model_path,
-            n_ctx=2048,
+            n_ctx=4096,  # Increased context window size
             n_threads=4,
             n_gpu_layers=0
         )
@@ -131,14 +165,22 @@ def generate_response(prompt, max_tokens):
     old_stdout = sys.stdout
     sys.stdout = captured_output = io.StringIO()
 
-    output = llm(
-        full_prompt,
-        max_tokens=max_tokens,
-        temperature=0.7,
-        top_p=0.9,
-        repeat_penalty=1.1,
-        stop=["</end>", "[END]", "Instruct:"]
-    )
+    try:
+        output = llm(
+            full_prompt,
+            max_tokens=max_tokens,
+            temperature=0.7,
+            top_p=0.9,
+            repeat_penalty=1.1,
+            stop=["</end>", "[END]", "Instruct:"]
+        )
+    except Exception as e:
+        logger.error(f"Error generating response: {e}")
+        sys.stdout = old_stdout
+        error_message = f"Error generating response: {str(e)}"
+        history.append(error_message)
+        session['chat_history'] = history
+        return error_message
 
     sys.stdout = old_stdout
     timings = captured_output.getvalue()
@@ -170,13 +212,14 @@ def main_page():
 def new_chat():
     # Save the old session before creating a new one
     history = session.get('chat_history', [])
+    timings = session.get('timings', '')
     if history:
         session_id = session.get('session_id')
         if not session_id:
             first_prompt = history[0].replace('Instruct:', '').replace('\nOutput:', '').strip()
             safe_name = secure_filename(first_prompt[:30])
             session_id = f"{datetime.now().strftime('%Y%m%d-%H%M')}_{safe_name}"
-        save_session(session_id, history)
+        save_session(session_id, history, timings)
 
     # Clear the session to start fresh
     session.pop('session_id', None)
@@ -187,7 +230,9 @@ def new_chat():
 @app.route('/session/<session_id>')
 def view_session(session_id):
     session['session_id'] = session_id
-    session['chat_history'] = load_session(session_id)
+    history, timings = load_session(session_id)
+    session['chat_history'] = history
+    session['timings'] = timings
     return redirect(url_for('main_page'))
 
 @app.route('/ask', methods=['POST'])
@@ -195,7 +240,7 @@ def ask_question():
     if llm is None: return "Model is not loaded.", 503
 
     prompt = request.form.get('prompt', '')
-    max_tokens = int(request.form.get('max_tokens', 256))
+    max_tokens = int(request.form.get('max_tokens', 512))  # Updated default value
     
     if not prompt: return "Please provide a prompt.", 400
 
@@ -207,6 +252,7 @@ def ask_question():
 def save_current_session():
     """Saves the current chat history with a user-friendly, URL-safe name."""
     history = session.get('chat_history', [])
+    timings = session.get('timings', '')
     if history:
         # Use existing session_id if it's already saved, otherwise create a new one
         session_id = session.get('session_id')
@@ -215,7 +261,7 @@ def save_current_session():
             safe_name = secure_filename(first_prompt[:30])
             session_id = f"{datetime.now().strftime('%Y%m%d-%H%M')}_{safe_name}"
         
-        save_session(session_id, history)
+        save_session(session_id, history, timings)
         session['session_id'] = session_id # Ensure session_id is set
         
     return redirect(url_for('main_page'))
